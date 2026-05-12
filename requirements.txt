@@ -1,0 +1,20 @@
+# Manipulação de Dados
+pandas
+numpy
+ccxt
+
+# Visualização e Geração de Imagens para CNN
+mplfinance
+Pillow
+
+# Inteligência Artificial (Deep Learning e RL)
+torch --index-url https://pytorch.org
+torchvision --index-url https://pytorch.org
+gymnasium
+stable-baselines3
+
+# Utilidades
+matplotlib
+tqdm
+streamlit 
+plotly

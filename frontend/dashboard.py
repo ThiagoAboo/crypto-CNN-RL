@@ -1,91 +1,137 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
 import os
+import json
 import time
 
-st.set_page_config(page_title="AI Crypto Analytics", layout="wide", page_icon="📈")
+st.set_page_config(page_title="IA Crypto Intelligence", layout="wide", page_icon="🤖")
+
+# --- CSS MANTIDO (O QUE ESTAVA BOM) ---
+st.markdown("""
+    <style>
+    .main { background-color: #0b0d10; }
+    .asset-card {
+        padding: 20px; border-radius: 15px; background-color: #161a1e;
+        border: 1px solid #2b2f36; margin-bottom: 10px;
+    }
+    .balance-box {
+        background: #1e2329; padding: 12px; border-radius: 8px; margin-top: 10px;
+        border: 1px solid #333;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 def load_data(file_name):
     path = os.path.join('bot', 'data', file_name)
     if os.path.exists(path):
-        try:
-            return pd.read_csv(path)
+        try: return pd.read_csv(path)
         except: return None
     return None
 
-def calculate_stats(df_signals):
-    """Calcula PnL real e Win Rate baseando-se em pares de ordens (Buy -> Sell)."""
+def load_wallet_state():
+    path = os.path.join('bot', 'data', 'wallet_state.json')
+    if os.path.exists(path):
+        try:
+            with open(path, 'r') as f: return json.load(f)
+        except: return None
+    return None
+
+def calculate_detailed_stats(df_signals, wallet_state):
     stats = {}
+    if df_signals is None or df_signals.empty: return stats
     for symbol in df_signals['symbol'].unique():
         symbol_df = df_signals[df_signals['symbol'] == symbol].sort_values('timestamp')
-        
         trades = []
         buy_price = None
-        
-        # Filtra sinais de execução (1=Buy, 2=Sell)
         for _, row in symbol_df.iterrows():
-            action = str(row['action'])
-            if "1" in action or "BUY" in action.upper():
-                buy_price = row['price']
-            elif ("2" in action or "SELL" in action.upper()) and buy_price is not None:
-                pnl = (row['price'] - buy_price) / buy_price
-                trades.append(pnl)
-                buy_price = None # Reseta para próxima operação
-        
-        if trades:
-            wins = len([t for t in trades if t > 0])
-            win_rate = (wins / len(trades)) * 100
-            total_pnl = sum(trades) * 100
-            stats[symbol] = {"win_rate": win_rate, "pnl": total_pnl, "total_trades": len(trades)}
-        else:
-            stats[symbol] = {"win_rate": 0, "pnl": 0, "total_trades": 0}
+            action = str(row['action']).upper()
+            price = float(row['price'])
+            if "BUY" in action or "1" in action: buy_price = price
+            elif ("SELL" in action or "2" in action) and buy_price is not None:
+                trades.append((price - buy_price) / buy_price)
+                buy_price = None 
+        qty = wallet_state["positions"].get(symbol, 0.0) if wallet_state else 0.0
+        stats[symbol] = {
+            "pnl_total": sum(trades) * 100,
+            "win_rate": (len([t for t in trades if t > 0]) / len(trades) * 100) if trades else 0,
+            "qty": qty,
+            "is_active": qty > 0,
+            "last_price": symbol_df.iloc[-1]['price'] if not symbol_df.empty else 0,
+            "trades_history": trades
+        }
     return stats
 
 def main():
-    st.title("📊 IA Crypto - Performance & Assertividade")
+    st.title("🤖 IA Crypto Intelligence Terminal")
     
     df_wallet = load_data('wallet_history.csv')
     df_signals = load_data('live_history.csv')
+    wallet_state = load_wallet_state()
 
     if df_wallet is not None and not df_wallet.empty:
-        df_wallet['timestamp'] = pd.to_datetime(df_wallet['timestamp'])
         latest = df_wallet.iloc[-1]
-        
-        # 1. Métricas de Cabeçalho
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Patrimônio Líquido", f"${latest['net_worth']:.2f}")
-        c2.metric("Saldo USD", f"${latest['balance']:.2f}")
-        c3.metric("Tempo Online", f"{len(df_wallet)} min")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Net Worth", f"${latest['net_worth']:.2f}")
+        c2.metric("Available USD", f"${latest['balance']:.2f}")
+        c3.metric("Total PnL", f"{((latest['net_worth'] - 1000)/10):.2f}%")
+        c4.metric("Active Assets", len([s for s in wallet_state["positions"].values() if s > 0]) if wallet_state else 0)
 
-        # 2. Gráfico de Evolução
-        st.plotly_chart(px.line(df_wallet, x='timestamp', y='net_worth', title="Curva de Equidade"), width='stretch')
+    st.divider()
 
-    if df_signals is not None and not df_signals.empty:
-        df_signals['timestamp'] = pd.to_datetime(df_signals['timestamp'])
-        stats = calculate_stats(df_signals)
-
-        # 3. Cards de Performance por Moeda
-        st.subheader("🎯 Assertividade por Ativo")
+    stats = calculate_detailed_stats(df_signals, wallet_state)
+    if stats:
+        st.subheader("📡 Monitoramento de Ativos")
         cols = st.columns(len(stats))
         for i, (symbol, data) in enumerate(stats.items()):
             with cols[i]:
-                color = "green" if data['pnl'] >= 0 else "red"
+                color = "#00FF7F" if data['pnl_total'] >= 0 else "#FF4B4B"
+                border = "2px solid #00FFCC" if data['is_active'] else "1px solid #2b2f36"
                 st.markdown(f"""
-                <div style="padding:15px; border-radius:10px; background-color:#1E1E1E; border-left: 5px solid {color};">
-                    <h3 style="margin:0;">{symbol}</h3>
-                    <p style="font-size:24px; font-weight:bold; color:{color}; margin:0;">{data['pnl']:.2f}% PnL</p>
-                    <p style="margin:0;">Taxa de Acerto: <b>{data['win_rate']:.1f}%</b></p>
-                    <p style="font-size:12px; color:gray;">Trades: {data['total_trades']}</p>
-                </div>
+                    <div class="asset-card" style="border: {border};">
+                        <h3 style="margin:0; color:#00FFCC; font-size:18px;">{symbol}</h3>
+                        <p style="font-size:26px; font-weight:bold; color:{color}; margin:5px 0;">{data['pnl_total']:.2f}%</p>
+                        <div class="balance-box">
+                            <p style="margin:0; font-size:10px; color:#888;">SALDO DA MOEDA</p>
+                            <p style="margin:0; font-size:15px; font-weight:bold;">{data['qty']:.6f}</p>
+                            <p style="margin:0; font-size:11px; color:#555;">≈ ${data['qty'] * data['last_price']:.2f} USD</p>
+                        </div>
+                        <p style="margin-top:10px; font-size:12px; color:#aaa;">Win Rate: <b>{data['win_rate']:.1f}%</b></p>
+                    </div>
                 """, unsafe_allow_html=True)
 
-        # 4. Gráfico de Comparação de PnL
-        st.subheader("📊 Comparativo de Lucro/Perda")
-        pnl_df = pd.DataFrame([{"Moeda": s, "PnL %": d['pnl']} for s, d in stats.items()])
-        st.plotly_chart(px.bar(pnl_df, x='Moeda', y='PnL %', color='PnL %', 
-                               color_continuous_scale='RdYlGn'), width='stretch')
+    st.divider()
+    g1, g2 = st.columns(2)
+    
+    with g1:
+        st.subheader("📈 Evolução Patrimonial")
+        if df_wallet is not None and not df_wallet.empty:
+            df_wallet['timestamp'] = pd.to_datetime(df_wallet['timestamp'])
+            
+            # --- CORREÇÃO DO GRÁFICO (O QUE ESTAVA RUIM) ---
+            fig = px.line(df_wallet, x='timestamp', y='net_worth', template="plotly_dark")
+            fig.update_traces(line_color='#00FFCC', line_width=3)
+            
+            # Ajuste dinâmico de escala: pega o min e max real e dá um "fôlego" de 0.05%
+            y_min = df_wallet['net_worth'].min() * 0.9995
+            y_max = df_wallet['net_worth'].max() * 1.0005
+            
+            fig.update_layout(
+                yaxis=dict(range=[y_min, y_max], autorange=False, title="Net Worth ($)"),
+                margin=dict(l=0, r=0, t=30, b=0)
+            )
+            st.plotly_chart(fig, width='stretch')
+
+    with g2:
+        st.subheader("🎯 Dispersão de Lucros")
+        all_t = []
+        if stats:
+            for s, d in stats.items():
+                for t in d['trades_history']: all_t.append({"Ativo": s, "Lucro %": t * 100})
+        if all_t:
+            fig_d = px.strip(pd.DataFrame(all_t), x="Ativo", y="Lucro %", color="Ativo", template="plotly_dark")
+            fig_d.add_hline(y=0, line_dash="dash", line_color="white")
+            st.plotly_chart(fig_d, width='stretch')
 
     time.sleep(15)
     st.rerun()

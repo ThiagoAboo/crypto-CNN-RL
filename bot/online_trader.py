@@ -1,16 +1,14 @@
 import sys
 import os
+import numpy as np
 
-# 1. Garante que as pastas do projeto estão no caminho de busca do Python
+# --- ANCORAGEM DE DIRETÓRIO LOCAL ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-# 2. PONTE DE COMPATIBILIDADE (Resolve o ModuleNotFoundError do arquivo .zip)
-# Importamos o seu arquivo local 'models'
+# PONTE DE COMPATIBILIDADE KAGGLE -> LOCAL
 import bot.src.models as local_models
-# Registramos ele na memória do Python fingindo ser o 'cnn' que o Kaggle gerou
 sys.modules['bot.src.cnn'] = local_models
 
-# Agora o Stable-Baselines pode ser importado com segurança
 import time
 import shutil
 import pandas as pd
@@ -23,6 +21,7 @@ from bot.src.wallet import LiveWallet
 from stable_baselines3 import PPO
 
 def save_signal_log(data):
+    """Salva o histórico de sinais APENAS se for uma execução real (BUY ou SELL)."""
     log_path = os.path.join(config.DATA_DIR, 'live_history.csv')
     df = pd.DataFrame([data])
     df.to_csv(log_path, mode='a', index=False, header=not os.path.exists(log_path))
@@ -39,13 +38,17 @@ def run_online_session():
     processor = ImageProcessor()
     wallet = LiveWallet()
     
-    # Agora o load vai funcionar porque a ponte redirecionará o 'cnn' para 'models'
     model = PPO.load(p_curr, device="cpu")
     model.learning_rate = config.ONLINE_LEARNING_RATE
+
+    print(f"\n[LIVE] Monitoramento Iniciado: {config.TIMEFRAME} via Binance Local")
+    print(f"[INFO] Filtro por Retorno de Execução Ativado.\n")
 
     candle_count = 0
     while True:
         try:
+            current_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
             prices = {}
             for symbol in config.SYMBOLS:
                 df = loader.fetch_historical_data(symbol)
@@ -55,33 +58,61 @@ def run_online_session():
                 win = df.iloc[-config.WINDOW_SIZE:].copy().set_index('timestamp')
                 obs = processor.dataframe_to_numpy(win)
                 
+                if obs.ndim == 3:
+                    obs = np.expand_dims(obs, axis=0)
+                
                 action, _ = model.predict(obs, deterministic=True)
-                report = wallet.execute_logic(symbol, int(action), prices[symbol])
                 
-                print(f"[LIVE] {symbol:10} | {report}")
+                if hasattr(action, "item"):
+                    trade_action = int(action.item())
+                else:
+                    trade_action = int(action)
                 
-                save_signal_log({
-                    "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "symbol": symbol, "timeframe": config.TIMEFRAME,
-                    "price": prices[symbol], "action": int(action)
-                })
+                # Executa a lógica financeira e captura o relatório em texto
+                report = wallet.execute_logic(symbol, trade_action, prices[symbol])
+                print(f"[{current_timestamp.split()[-1]}] {symbol:10} | {report}")
+                
+                # --- NOVO FILTRO PRECISO POR EXTENSO ---
+                # Ignora o número bruto (0,1,2) e valida o que a carteira REALMENTE executou
+                if "BUY" in report.upper():
+                    save_signal_log({
+                        "timestamp": current_timestamp,
+                        "symbol": symbol, "timeframe": config.TIMEFRAME,
+                        "price": prices[symbol], "action": "BUY" # Grava o texto literal
+                    })
+                elif "SELL" in report.upper():
+                    save_signal_log({
+                        "timestamp": current_timestamp,
+                        "symbol": symbol, "timeframe": config.TIMEFRAME,
+                        "price": prices[symbol], "action": "SELL" # Grava o texto literal
+                    })
 
                 if candle_count >= config.UPDATE_EVERY_N_CANDLES:
-                    print(f"[BRAIN] Adaptando modelo aos dados recentes de {symbol}...")
                     recent_df = df.tail(config.LOOKBACK_WINDOW_ONLINE)
                     env = CryptoTradingEnv(recent_df, symbol=symbol)
-                    
                     model.set_env(env)
                     model.learn(total_timesteps=config.N_STEPS_ONLINE, reset_num_timesteps=False)
                     model.save(p_curr)
                     env.close()
 
-            wallet.save_wallet_log(prices)
+            log_path = os.path.join(config.DATA_DIR, 'wallet_history.csv')
+            wallet_data = {
+                "timestamp": current_timestamp,
+                "balance": wallet.balance,
+                "net_worth": wallet.get_total_net_worth(prices)
+            }
+            df_wallet_log = pd.DataFrame([wallet_data])
+            df_wallet_log.to_csv(log_path, mode='a', index=False, header=not os.path.exists(log_path))
+
             candle_count = 0 if candle_count >= config.UPDATE_EVERY_N_CANDLES else candle_count + 1
             time.sleep(60) 
             
-        except KeyboardInterrupt: break
-        except Exception as e: print(f"Error: {e}"); time.sleep(10)
+        except KeyboardInterrupt: 
+            print("\n[STOP] Encerrando monitoramento.")
+            break
+        except Exception as e: 
+            print(f"Error no Loop Principal: {e}")
+            time.sleep(10)
 
 if __name__ == "__main__":
     run_online_session()

@@ -1,5 +1,17 @@
-import time
+import sys
 import os
+
+# 1. Garante que as pastas do projeto estão no caminho de busca do Python
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+# 2. PONTE DE COMPATIBILIDADE (Resolve o ModuleNotFoundError do arquivo .zip)
+# Importamos o seu arquivo local 'models'
+import bot.src.models as local_models
+# Registramos ele na memória do Python fingindo ser o 'cnn' que o Kaggle gerou
+sys.modules['bot.src.cnn'] = local_models
+
+# Agora o Stable-Baselines pode ser importado com segurança
+import time
 import shutil
 import pandas as pd
 from datetime import datetime
@@ -27,7 +39,7 @@ def run_online_session():
     processor = ImageProcessor()
     wallet = LiveWallet()
     
-    # Carrega o modelo forçando a execução leve em CPU local
+    # Agora o load vai funcionar porque a ponte redirecionará o 'cnn' para 'models'
     model = PPO.load(p_curr, device="cpu")
     model.learning_rate = config.ONLINE_LEARNING_RATE
 

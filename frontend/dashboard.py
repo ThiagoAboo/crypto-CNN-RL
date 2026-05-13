@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import json
 import time
 from datetime import datetime, timedelta
 
-# Configurações de layout
+# Configurações de layout e aba do navegador
 st.set_page_config(page_title="IA Crypto Intelligence", layout="wide", page_icon="🤖")
 
 # --- CSS CUSTOMIZADO ---
@@ -41,11 +42,9 @@ def load_wallet_state():
     return None
 
 def calculate_detailed_stats(df_signals, wallet_state, days_filter):
-    """Calcula stats filtrando pelo período selecionado."""
     stats = {}
     if df_signals is None or df_signals.empty: return stats
     
-    # Aplica filtro de data
     cutoff_date = datetime.now() - timedelta(days=days_filter)
     df_filtered = df_signals[pd.to_datetime(df_signals['timestamp']) >= cutoff_date]
     
@@ -79,11 +78,10 @@ def main():
     st.sidebar.title("⚙️ Filtros de Análise")
     periodo = st.sidebar.selectbox(
         "Período de Performance",
-        options=[1, 7, 30, 90, 365],
+        options=[1, 7, 30],
         format_func=lambda x: f"Últimas 24h" if x==1 else f"Últimos {x} dias",
-        index=1 # Padrão: 7 dias
+        index=1
     )
-    st.sidebar.info(f"As estatísticas dos cards e dispersão refletem apenas os últimos {periodo} dias.")
 
     st.title("🤖 IA Crypto Intelligence Terminal")
     
@@ -119,7 +117,7 @@ def main():
                         <p style="font-size:26px; font-weight:bold; color:{color}; margin:5px 0;">{data['pnl_total']:.2f}%</p>
                         <div class="balance-box">
                             <p style="margin:0; font-size:10px; color:#888;">SALDO ATUAL</p>
-                            <p style="margin:0; font-size:15px; font-weight:bold;">{data['qty']:.6f}</p>
+                            <p style="margin:0; font-size:15px; font-weight:bold; color:white;">{data['qty']:.6f}</p>
                             <p style="margin:0; font-size:11px; color:#555;">≈ ${data['qty'] * data['last_price']:.2f} USD</p>
                         </div>
                         <p style="margin-top:10px; font-size:12px; color:#aaa;">Win Rate: <b>{data['win_rate']:.1f}%</b></p>
@@ -131,13 +129,71 @@ def main():
     g1, g2 = st.columns(2)
     
     with g1:
-        st.subheader("📈 Evolução Patrimonial (Total)")
+        st.subheader("📈 Evolução Patrimonial e Sinais da IA")
         if df_wallet is not None and not df_wallet.empty:
             df_wallet['timestamp'] = pd.to_datetime(df_wallet['timestamp'])
-            fig = px.line(df_wallet, x='timestamp', y='net_worth', template="plotly_dark")
-            fig.update_traces(line_color='#00FFCC', line_width=3)
+            
+            fig = go.Figure()
+            
+            # 1. Linha principal do Patrimônio Líquido
+            fig.add_trace(go.Scatter(
+                x=df_wallet['timestamp'], 
+                y=df_wallet['net_worth'],
+                mode='lines',
+                name='Net Worth',
+                line=dict(color='#00FFCC', width=3)
+            ))
+            
+            # 2. Injeção de Marcadores de Compra e Venda na Linha
+            if df_signals is not None and not df_signals.empty:
+                df_signals['timestamp'] = pd.to_datetime(df_signals['timestamp'])
+                
+                df_signals_filtered = df_signals[df_signals['timestamp'] >= df_wallet['timestamp'].min()]
+                df_signals_filtered = df_signals_filtered.sort_values('timestamp')
+                df_wallet_sorted = df_wallet.sort_values('timestamp')
+                
+                merged_signals = pd.merge_asof(
+                    df_signals_filtered, 
+                    df_wallet_sorted, 
+                    on='timestamp', 
+                    direction='nearest'
+                )
+                
+                buys = merged_signals[merged_signals['action'].astype(str).str.contains("BUY|1")]
+                sells = merged_signals[merged_signals['action'].astype(str).str.contains("SELL|2")]
+                
+                # Adiciona triângulos verdes para COMPRAS
+                fig.add_trace(go.Scatter(
+                    x=buys['timestamp'],
+                    y=buys['net_worth'],
+                    mode='markers',
+                    name='Sinal: COMPRA',
+                    marker=dict(symbol='triangle-up', size=12, color='#00FF7F', line=dict(color='black', width=1)),
+                    text=buys['symbol'],
+                    hovertemplate="<b>Compra: %{text}</b><br>Data: %{x}<br>Patrimônio: $%{y:.2f}<extra></extra>"
+                ))
+                
+                # Adiciona triângulos vermelhos para VENDAS
+                fig.add_trace(go.Scatter(
+                    x=sells['timestamp'],
+                    y=sells['net_worth'],
+                    mode='markers',
+                    name='Sinal: VENDA',
+                    marker=dict(symbol='triangle-down', size=12, color='#FF4B4B', line=dict(color='black', width=1)),
+                    text=sells['symbol'],
+                    hovertemplate="<b>Venda: %{text}</b><br>Data: %{x}<br>Patrimônio: $%{y:.2f}<extra></extra>"
+                ))
+            
             y_min, y_max = df_wallet['net_worth'].min() * 0.9995, df_wallet['net_worth'].max() * 1.0005
-            fig.update_layout(yaxis=dict(range=[y_min, y_max], autorange=False), margin=dict(l=0, r=0, t=30, b=0))
+            
+            fig.update_layout(
+                template="plotly_dark",
+                yaxis=dict(range=[y_min, y_max], autorange=False, title="Net Worth ($)"),
+                xaxis=dict(title="Horário"),
+                margin=dict(l=0, r=0, t=30, b=0),
+                hovermode="x unified",
+                legend=dict(orientation="h", y=1.1, x=0)
+            )
             st.plotly_chart(fig, use_container_width=True)
 
     with g2:

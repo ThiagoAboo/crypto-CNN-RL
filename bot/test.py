@@ -46,6 +46,13 @@ def run_backtest():
             if current_step % 100 == 0 or done:
                 percent = (current_step / total_steps) * 100
                 print(f"  > {symbol}: {percent:.1f}% concluído...", end='\r')
+                
+        # --- TRACE RECONSTRUÍDO DO LUCRO NO BACKTEST ---
+        # Captura os dados antes de fechar o ambiente de simulação
+        pnl_final = ((env.net_worth - config.INITIAL_BALANCE) / config.INITIAL_BALANCE) * 100
+        print(f"\n[FINISH] Teste de {symbol} finalizado.")
+        print(f"[TRACE] Patrimônio Final: ${env.net_worth:.2f} | PnL do Backtest: {pnl_final:.2f}%")
+        print(f"{'-'*50}")
 
         print(f"\n[SUCCESS] Teste de {symbol} finalizado.")
         env.close()

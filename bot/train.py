@@ -15,7 +15,7 @@ class ProgressLogCallback(BaseCallback):
         self.start_time = time.time()
 
     def _on_step(self) -> bool:
-        if self.n_calls % 512 == 0: # Atualiza a cada bloco de steps
+        if self.n_calls % config.N_STEPS == 0: # Atualiza a cada bloco de steps
             percent = (self.n_calls / self.total_steps) * 100
             elapsed = time.time() - self.start_time
             # Estimativa de tempo restante
@@ -33,7 +33,7 @@ def run_training():
     if not os.path.exists('bot/models'):
         os.makedirs('bot/models')
 
-    for symbol in config.SYMBOLS:
+    for symbol in config.SYMBOLS_TRANING:
         print(f"\n{'='*50}")
         print(f" FOCO DE TREINO: {symbol} ")
         print(f"{'='*50}")
@@ -51,7 +51,8 @@ def run_training():
                 learning_rate=config.LEARNING_RATE,
                 n_steps=config.N_STEPS,
                 batch_size=config.BATCH_SIZE,
-                device="cpu",
+                gamma=config.GAMMA,
+                device="auto",
                 policy_kwargs=dict(normalize_images=False)
             )
         else:
@@ -63,6 +64,13 @@ def run_training():
         print(f"[START] Iniciando processamento de {config.TOTAL_TIMESTEPS} steps...")
         model.learn(total_timesteps=config.TOTAL_TIMESTEPS, reset_num_timesteps=False, callback=callback)
 
+        # --- TRACE RECONSTRUÍDO DO LUCRO FINAL ---
+        # Captura o patrimônio líquido final simulado ao término do treino
+        pnl_final = ((env.net_worth - config.INITIAL_BALANCE) / config.INITIAL_BALANCE) * 100
+        print(f"\n[FINISH] Treino de {symbol} concluído.")
+        print(f"[TRACE] Patrimônio Final: ${env.net_worth:.2f} | PnL Acumulado: {pnl_final:.2f}%")
+        print(f"{'-'*50}")
+        
         # Salva o modelo mestre com o timeframe no nome
         model_path = f"bot/models/ppo_master_{config.TIMEFRAME}"
         model.save(model_path)

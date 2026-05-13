@@ -47,7 +47,7 @@ class CryptoTradingEnv(gym.Env):
             if price_change <= -config.STOP_LOSS_PCT:
                 action = 2 # Força a venda
                 step_reward -= 0.05 # Punição pesada
-                if config.DEBUG: print(f"[STOP LOSS] {self.symbol} acionado em ${current_price:.2f}")
+                if config.DEBUG_DECISION: print(f"[STOP LOSS] {self.symbol} acionado em ${current_price:.2f}")
 
         # Execução
         if action == 1 and self.balance > 0: # BUY

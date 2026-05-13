@@ -22,7 +22,7 @@ class CryptoTradingEnv(gym.Env):
         self.shares_held = 0
         self.net_worth = config.INITIAL_BALANCE
         self.prev_net_worth = config.INITIAL_BALANCE
-        self.entry_price = 0 # Para cálculo de Stop Loss
+        self.entry_price = 0
         return self._get_observation(), {}
 
     def _get_observation(self):
@@ -41,34 +41,51 @@ class CryptoTradingEnv(gym.Env):
         step_reward = 0
         trade_executed = False
 
-        # Lógica de Stop Loss
+        # 1. Gestão e Punição Severa de Stop Loss
         if config.USE_STOP_LOSS and self.shares_held > 0:
             price_change = (current_price - self.entry_price) / self.entry_price
             if price_change <= -config.STOP_LOSS_PCT:
-                action = 2 # Força a venda
-                step_reward -= 0.05 # Punição pesada
-                if config.DEBUG_DECISION: print(f"[STOP LOSS] {self.symbol} acionado em ${current_price:.2f}")
+                action = 2 # Força a venda imediata
+                step_reward += config.STRICT_STOP_LOSS_REWARD 
+                if config.DEBUG: print(f"[STOP LOSS] {self.symbol} acionado em ${current_price:.2f}")
 
-        # Execução
+        # 2. Execução Lógica das Ações
         if action == 1 and self.balance > 0: # BUY
             cost = self.balance * config.COMMISSION
             self.shares_held = (self.balance - cost) / current_price
             self.balance = 0
             self.entry_price = current_price
             trade_executed = True
+            
         elif action == 2 and self.shares_held > 0: # SELL
             sale = self.shares_held * current_price
+            realized_pnl = (current_price - self.entry_price) / self.entry_price
+            
+            # --- MUDANÇA CRUCIAL: Recompensa baseada no PnL REALIZADO ---
+            if realized_pnl > 0:
+                step_reward += realized_pnl * config.PROFIT_WEIGHT # Recompensa forte por lucro real
+            else:
+                step_reward += realized_pnl * config.LOSS_WEIGHT   # Punição agressiva por prejuízo
+
             self.balance = sale * (1 - config.COMMISSION)
             self.shares_held = 0
             trade_executed = True
 
         self.net_worth = self.balance + (self.shares_held * current_price)
         
-        # Reward
-        profit_variation = (self.net_worth - self.prev_net_worth) / self.prev_net_worth
-        step_reward += profit_variation * config.PROFIT_WEIGHT
-        if trade_executed: step_reward -= config.TRADE_PENALTY
-        if self.net_worth > config.INITIAL_BALANCE: step_reward += config.CONSISTENCY_BONUS
+        # 3. Punições Passivas (Segurar moeda caindo sem executar venda)
+        if self.shares_held > 0:
+            floating_pnl = (current_price - self.entry_price) / self.entry_price
+            if floating_pnl < 0:
+                step_reward += config.HOLDING_PENALTY 
+
+        # 4. Taxa Fixa por Movimentação (Inibe o Overtrading)
+        if trade_executed: 
+            step_reward -= config.TRADE_PENALTY
+
+        # 5. Bônus por consistência patrimonial
+        if self.net_worth > config.INITIAL_BALANCE: 
+            step_reward += config.CONSISTENCY_BONUS
 
         self.prev_net_worth = self.net_worth
         return self._get_observation(), step_reward, terminated, truncated, {}

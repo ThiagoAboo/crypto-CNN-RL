@@ -20,7 +20,6 @@ def run_online_session():
     p_curr = os.path.join(config.MODEL_DIR, f"{m_name}.zip")
     p_orig = os.path.join(config.MODEL_DIR, f"{m_name}_original.zip")
     
-    # Backup de segurança antes de começar o online learning
     if os.path.exists(p_curr) and not os.path.exists(p_orig):
         shutil.copyfile(p_curr, p_orig)
 
@@ -28,7 +27,7 @@ def run_online_session():
     processor = ImageProcessor()
     wallet = LiveWallet()
     
-    # Carrega modelo e injeta Learning Rate do config
+    # Carrega o modelo forçando a execução leve em CPU local
     model = PPO.load(p_curr, device="cpu")
     model.learning_rate = config.ONLINE_LEARNING_RATE
 
@@ -44,7 +43,6 @@ def run_online_session():
                 win = df.iloc[-config.WINDOW_SIZE:].copy().set_index('timestamp')
                 obs = processor.dataframe_to_numpy(win)
                 
-                # IA Decide
                 action, _ = model.predict(obs, deterministic=True)
                 report = wallet.execute_logic(symbol, int(action), prices[symbol])
                 
@@ -56,10 +54,8 @@ def run_online_session():
                     "price": prices[symbol], "action": int(action)
                 })
 
-                # --- ONLINE LEARNING DINÂMICO ---
                 if candle_count >= config.UPDATE_EVERY_N_CANDLES:
                     print(f"[BRAIN] Adaptando modelo aos dados recentes de {symbol}...")
-                    # Janela de dados definida no config
                     recent_df = df.tail(config.LOOKBACK_WINDOW_ONLINE)
                     env = CryptoTradingEnv(recent_df, symbol=symbol)
                     
@@ -70,7 +66,7 @@ def run_online_session():
 
             wallet.save_wallet_log(prices)
             candle_count = 0 if candle_count >= config.UPDATE_EVERY_N_CANDLES else candle_count + 1
-            time.sleep(60) # Verifica o mercado a cada minuto
+            time.sleep(60) 
             
         except KeyboardInterrupt: break
         except Exception as e: print(f"Error: {e}"); time.sleep(10)
